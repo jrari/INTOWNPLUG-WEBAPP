@@ -1,0 +1,83 @@
+from flask import Flask, request, jsonify
+import sqlite3
+import os
+
+app = Flask(__name__)
+
+# Initialize database (similar to your bot code)
+def init_db():
+    conn = sqlite3.connect('appointments.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS appointments 
+                 (user_id INTEGER, name TEXT, phone TEXT, date TEXT, verified INTEGER DEFAULT 0)''')
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# Save appointment
+@app.route('/book', methods=['POST'])
+def book_appointment():
+    data = request.get_json()
+    user_id = data.get('userId')
+    name = data.get('name')
+    phone = data.get('phone')
+    date = data.get('date')
+
+    if not all([user_id, name, phone, date]):
+        return jsonify({'success': False, 'message': 'Missing fields'}), 400
+
+    try:
+        conn = sqlite3.connect('appointments.db')
+        c = conn.cursor()
+        c.execute('INSERT INTO appointments (user_id, name, phone, date, verified) VALUES (?, ?, ?, ?, ?)',
+                  (user_id, name, phone, date, 0))
+        conn.commit()
+        booking_id = c.lastrowid  # Use this as a simple ID for now
+        conn.close()
+        return jsonify({'success': True, 'bookingId': booking_id})
+    except sqlite3.Error as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+# Check status
+@app.route('/status/<booking_id>', methods=['GET'])
+def check_status(booking_id):
+    try:
+        conn = sqlite3.connect('appointments.db')
+        c = conn.cursor()
+        c.execute('SELECT name, phone, date, verified FROM appointments WHERE user_id = ?', (booking_id,))
+        appointment = c.fetchone()
+        conn.close()
+        if appointment:
+            name, phone, date, verified = appointment
+            return jsonify({'status': f'Name: {name}, Phone: {phone}, Date: {date}, Status: {"Verified" if verified else "Pending"}'})
+        return jsonify({'status': 'Booking not found'}), 404
+    except sqlite3.Error as e:
+        return jsonify({'status': str(e)}), 500
+
+# Handle verification (video upload)
+@app.route('/verify', methods=['POST'])
+def verify_appointment():
+    if 'video' not in request.files:
+        return jsonify({'success': False, 'message': 'No video uploaded'}), 400
+
+    video = request.files['video']
+    user_id = request.form.get('userId')
+
+    if not user_id:
+        return jsonify({'success': False, 'message': 'No user ID provided'}), 400
+
+    try:
+        # Save video (e.g., to disk or cloud storage) and update database
+        conn = sqlite3.connect('appointments.db')
+        c = conn.cursor()
+        c.execute('UPDATE appointments SET verified = 1 WHERE user_id = ?', (user_id,))
+        conn.commit()
+        conn.close()
+        video.save(f'uploads/verification_{user_id}.mp4')  # Save to a directory (ensure it exists)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
